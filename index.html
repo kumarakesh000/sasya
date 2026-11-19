@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sasya Field Monitor</title>
+<!-- Sasya field node dashboard: reads the MQTT topic published by the
+     LoRa receiver (over GSM) and shows it live. Open this file in Chrome/Edge.
+     Connects to the broker over secure WebSocket; history is kept in this
+     browser (localStorage) so it survives page reloads.                      -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js"></script>
+<script>window.mqtt||document.write('<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"><\/script>')</script>
+<style>
+:root{--bg:#f4f5f2;--card:#fff;--ink:#1d2321;--mute:#6b7470;--line:#e2e5e0;
+--accent:#2f7d4f;--warn:#b7791f;--bad:#c0392b;--info:#2b6cb0;--grid:#eceee9}
+@media (prefers-color-scheme:dark){:root{--bg:#121614;--card:#1b201d;--ink:#e6ebe7;
+--mute:#8f9a94;--line:#2a312d;--accent:#5cc488;--warn:#e0a948;--bad:#ef6b5b;--info:#6aa8ef;--grid:#242a26}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1150px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:14px}
+h1{font-size:20px;margin:0;font-weight:650}
+.sub{color:var(--mute);font-size:13px}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.pill{font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--mute)}
+.pill b{color:var(--ink);font-weight:600}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--mute)}
+.ok{background:var(--accent)}.wn{background:var(--warn)}.bd{background:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-height:96px}
+.k{font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+.v{font-size:28px;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums}
+.v small{font-size:14px;color:var(--mute);font-weight:500;margin-left:2px}
+.n{font-size:12px;margin-top:2px;color:var(--mute)}
+.tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;margin-top:6px}
+.t-ok{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+.t-wn{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+.t-bd{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.t-in{background:color-mix(in srgb,var(--info) 18%,transparent);color:var(--info)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:12px}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+button,select,input{font:inherit;font-size:13px;border:1px solid var(--line);background:transparent;color:var(--ink);padding:4px 10px;border-radius:8px}
+button{cursor:pointer;color:var(--mute)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.right{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+canvas{width:100%;height:260px;display:block}
+.raw{font-family:ui-monospace,Consolas,monospace;font-size:13px;word-break:break-all}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mute);font-weight:600;font-size:12px}
+.tbl{max-height:320px;overflow:auto}
+details summary{cursor:pointer;color:var(--mute);font-size:13px}
+.cfg{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;align-items:center;margin-top:10px;max-width:620px}
+.cfg input{width:100%}
+#tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;padding:4px 8px;border-radius:6px;display:none;white-space:nowrap}
+</style></head><body><div class="wrap">
+
+<header>
+ <h1>Sasya Field Monitor</h1><span class="sub" id="seen">connecting&hellip;</span>
+ <div class="pills">
+  <span class="pill"><span class="dot" id="dBroker"></span>Broker <b id="pBroker">&ndash;</b></span>
+  <span class="pill"><span class="dot" id="dRx"></span>Receiver <b id="pRx">&ndash;</b></span>
+  <span class="pill"><span class="dot" id="dNode"></span>Node <b id="pNode">&ndash;</b></span>
+ </div>
+</header>
+
+<div class="grid">
+ <div class="card"><div class="k">Soil tension</div><div class="v" id="vSM">&ndash;</div><div id="tSM"></div></div>
+ <div class="card"><div class="k">Soil temp</div><div class="v" id="vDS">&ndash;</div></div>
+ <div class="card"><div class="k">Air temp</div><div class="v" id="vT">&ndash;</div></div>
+ <div class="card"><div class="k">Humidity</div><div class="v" id="vH">&ndash;</div></div>
+ <div class="card"><div class="k">Pressure</div><div class="v" id="vP">&ndash;</div></div>
+ <div class="card"><div class="k">Battery</div><div class="v" id="vB">&ndash;</div><div id="tB"></div></div>
+ <div class="card"><div class="k">Water probe 1</div><div class="v" id="vW1">&ndash;</div></div>
+ <div class="card"><div class="k">Water probe 2</div><div class="v" id="vW2">&ndash;</div></div>
+ <div class="card"><div class="k">LoRa signal</div><div class="v" id="vRssi">&ndash;</div><div class="n" id="nSig"></div></div>
+</div>
+
+<div class="panel">
+ <div class="row"><div id="tabs" class="row" style="margin:0"></div>
+  <div class="right"><select id="range">
+   <option value="3600000">1 hour</option><option value="21600000" selected>6 hours</option>
+   <option value="86400000">24 hours</option><option value="604800000">7 days</option><option value="0">All</option></select></div></div>
+ <canvas id="ch"></canvas>
+</div>
+
+<div class="panel">
+ <div class="row"><span class="k">Recent packets</span>
+  <div class="right"><span class="sub" id="count"></span><button id="csv">Export CSV</button><button id="clear">Clear history</button></div></div>
+ <div class="tbl"><table><thead><tr><th>Time</th><th>#</th><th>Soil cb</th><th>Soil &deg;C</th><th>Air &deg;C</th><th>RH %</th><th>hPa</th><th>Batt V</th><th>W1</th><th>W2</th><th>RSSI</th></tr></thead>
+ <tbody id="rows"></tbody></table></div>
+</div>
+
+<div class="panel">
+ <div class="k" style="margin-bottom:4px">Last raw message</div><div class="raw" id="raw">&ndash;</div>
+ <details style="margin-top:10px"><summary>Connection settings</summary>
+  <div class="cfg">
+   <label for="cUrl">Broker URL</label><input id="cUrl">
+   <label for="cTopic">Topic</label><input id="cTopic">
+   <label for="cUser">Username</label><input id="cUser" autocomplete="off">
+   <label for="cPass">Password</label><input id="cPass" type="password" autocomplete="off">
+   <span></span><div><button id="save" class="on">Save &amp; reconnect</button></div>
+  </div>
+ </details>
+</div>
+</div><div id="tip"></div>
+
+<script>
+const DEFAULTS={url:"wss://broker.hivemq.com:8884/mqtt",topic:"sasya/field-node-4583",user:"",pass:""};
+const HKEY="sasya_hist_v1",CKEY="sasya_cfg_v1",MAXH=20000;
+const $=id=>document.getElementById(id);
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
+             set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+
+let cfg=Object.assign({},DEFAULTS,store.get(CKEY,{}));
+let hist=store.get(HKEY,[]);           // [{t:ms, d:{...}}]
+let last=hist.length?hist[hist.length-1]:null, metric=store.get("sasya_metric","SM");
+let client=null, rxStatus="?";
+
+const METRICS=[{k:"SM",label:"Soil tension",unit:"cb",d:0},{k:"DS",label:"Soil temp",unit:"°C",d:2},
+ {k:"T",label:"Air temp",unit:"°C",d:2},{k:"H",label:"Humidity",unit:"%",d:1},{k:"P",label:"Pressure",unit:"hPa",d:1},
+ {k:"B",label:"Battery",unit:"V",d:2},{k:"rssi",label:"RSSI",unit:"dBm",d:0}];
+
+const isNum=v=>typeof v==="number"&&isFinite(v);
+function ago(ms){const s=Math.max(0,Math.round(ms/1000));if(s<60)return s+" s ago";if(s<3600)return Math.floor(s/60)+" min ago";
+ if(s<86400)return Math.floor(s/3600)+" h "+Math.floor(s%3600/60)+" min ago";return Math.floor(s/86400)+" d ago"}
+function fmt(v,d){return isNum(v)?v.toFixed(d):(v==null?"–":String(v))}
+function val(id,v,unit,d){const el=$(id);
+ if(v==null){el.innerHTML="&ndash;";return}
+ el.innerHTML=isNum(v)?v.toFixed(d)+"<small>"+unit+"</small>":'<span style="font-size:18px;color:var(--bad)">'+v+"</span>"}
+function tag(id,c,t){$(id).innerHTML=t?'<span class="tag '+c+'">'+t+"</span>":""}
+function smInfo(v){if(!isNum(v)){if(v==="OPEN")return["t-bd","Sensor dry or disconnected"];if(v==="SHORT")return["t-bd","Wires shorted"];
+  if(typeof v==="string"&&v.startsWith("HI"))return["t-bd","Too dry to measure"];return["t-bd","Sensor error"]}
+ if(v<=10)return["t-in","Wet / saturated"];if(v<=30)return["t-ok","Moist – good"];
+ if(v<=60)return["t-wn","Drying – irrigate soon"];return["t-bd","Dry – irrigate"]}
+function batInfo(v){if(!isNum(v))return["",""];if(v>=3.4)return["t-ok","Good"];if(v>=3.2)return["t-wn","Getting low"];return["t-bd","Replace battery"]}
+function water(id,v){$(id).innerHTML=v===1?'<span class="tag t-in" style="font-size:16px">Water</span>':
+ v===0?'<span class="tag t-ok" style="font-size:16px">Dry</span>':"&ndash;"}
+
+/* ---- MQTT ---------------------------------------------------------------- */
+function setBroker(state){const m={online:["ok","connected"],connecting:["wn","connecting"],offline:["bd","offline"],error:["bd","error"]}[state];
+ $("dBroker").className="dot "+m[0];$("pBroker").textContent=m[1]}
+function connect(){
+ if(client){client.end(true);client=null}
+ if(!window.mqtt){setBroker("error");$("seen").textContent="mqtt.js failed to load (no internet?)";return}
+ setBroker("connecting");
+ client=mqtt.connect(cfg.url,{clientId:"sasya-pc-"+Math.random().toString(16).slice(2,10),
+  username:cfg.user||undefined,password:cfg.pass||undefined,reconnectPeriod:5000,connectTimeout:15000,clean:true});
+ client.on("connect",()=>{setBroker("online");if(!last)$("seen").textContent="connected, waiting for data";client.subscribe([cfg.topic+"/data",cfg.topic+"/status"],{qos:0})});
+ client.on("reconnect",()=>setBroker("connecting"));
+ client.on("offline",()=>setBroker("offline"));
+ client.on("error",e=>{setBroker("error");$("seen").textContent="Broker error: "+(e&&e.message||e)});
+ client.on("close",()=>{if(!client.connected&&$("pBroker").textContent!=="connected")$("seen").textContent=
+  "Cannot reach "+cfg.url+" – the network may block this port; try the other broker in Connection settings"});
+ client.on("message",(topic,payload,packet)=>{
+  const text=payload.toString();
+  if(topic.endsWith("/status")){rxStatus=text;render();return}
+  let d;try{d=JSON.parse(text)}catch(e){return}
+  // A retained message on (re)connect is the last packet we may already have
+  if(last&&last.d.n===d.n&&last.d.raw===d.raw){render();return}
+  const rec={t:Date.now(),d,retained:!!packet.retain};
+  hist.push(rec);if(hist.length>MAXH)hist.splice(0,hist.length-MAXH);
+  last=rec;store.set(HKEY,hist);render();draw();table();
+ });
+}
+
+/* ---- rendering ----------------------------------------------------------- */
+function render(){
+ $("dRx").className="dot "+(rxStatus==="online"?"ok":rxStatus==="offline"?"bd":"");
+ $("pRx").textContent=rxStatus==="?"?"unknown":rxStatus;
+ if(!last){$("seen").textContent="waiting for data on "+cfg.topic+"/data";return}
+ const d=last.d,age=Date.now()-last.t;
+ $("seen").textContent="Packet #"+d.n+" · "+(last.retained?"last stored message":ago(age));
+ const live=!last.retained&&age<150000;
+ $("dNode").className="dot "+(live?"ok":age<600000?"wn":"bd");
+ $("pNode").textContent=live?"live":last.retained?"waiting for next":"silent "+ago(age).replace(" ago","");
+ val("vSM",d.SM,"cb",0);const s=smInfo(d.SM);tag("tSM",s[0],s[1]);
+ val("vDS",d.DS,"°C",2);val("vT",d.T,"°C",2);val("vH",d.H,"%",1);val("vP",d.P,"hPa",1);
+ val("vB",d.B,"V",2);const b=batInfo(d.B);tag("tB",b[0],b[1]);
+ water("vW1",d.W1);water("vW2",d.W2);
+ $("vRssi").innerHTML=isNum(d.rssi)?Math.round(d.rssi)+"<small>dBm</small>":"&ndash;";
+ $("nSig").textContent=isNum(d.snr)?"SNR "+d.snr+" dB":"";
+ $("raw").textContent=d.raw||JSON.stringify(d);
+}
+
+function table(){
+ const rows=hist.slice(-200).reverse();
+ $("count").textContent=hist.length+" packets stored";
+ $("rows").innerHTML=rows.map(r=>{const d=r.d;return "<tr><td>"+new Date(r.t).toLocaleString()+"</td><td>"+fmt(d.n,0)+
+  "</td><td>"+fmt(d.SM,0)+"</td><td>"+fmt(d.DS,2)+"</td><td>"+fmt(d.T,2)+"</td><td>"+fmt(d.H,1)+"</td><td>"+fmt(d.P,1)+
+  "</td><td>"+fmt(d.B,2)+"</td><td>"+fmt(d.W1,0)+"</td><td>"+fmt(d.W2,0)+"</td><td>"+fmt(d.rssi,0)+"</td></tr>"}).join("");
+}
+
+function tabs(){$("tabs").innerHTML=METRICS.map(m=>'<button data-k="'+m.k+'" class="'+(m.k===metric?"on":"")+'">'+m.label+"</button>").join("");
+ $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{metric=b.dataset.k;store.set("sasya_metric",metric);tabs();draw()})}
+
+let pts=[];
+function draw(){
+ const c=$("ch"),r=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+ c.width=r.width*dpr;c.height=r.height*dpr;const g=c.getContext("2d");g.scale(dpr,dpr);
+ const W=r.width,H=r.height,cs=getComputedStyle(document.documentElement),col=n=>cs.getPropertyValue(n).trim();
+ g.clearRect(0,0,W,H);g.font="12px system-ui,sans-serif";pts=[];
+ const m=METRICS.find(x=>x.k===metric),span=+$("range").value,now=Date.now();
+ const data=hist.filter(h=>isNum(h.d[metric])&&(!span||now-h.t<=span)).map(h=>({t:h.t,v:h.d[metric],n:h.d.n}));
+ if(!data.length){g.fillStyle=col("--mute");g.fillText("No "+m.label.toLowerCase()+" readings in this range yet",10,20);return}
+ let lo=Math.min(...data.map(p=>p.v)),hi=Math.max(...data.map(p=>p.v));
+ if(hi-lo<1e-9){lo-=1;hi+=1}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;
+ const t0=span?now-span:data[0].t,t1=Math.max(now,t0+60000);
+ const L=50,R=10,T=10,B=24,X=t=>L+(t-t0)/(t1-t0)*(W-L-R),Y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+ g.strokeStyle=col("--grid");g.fillStyle=col("--mute");g.lineWidth=1;
+ for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Y(v);g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(v.toFixed(m.d>1?1:m.d),4,y+4)}
+ const long=t1-t0>86400000;
+ for(let i=0;i<=4;i++){const t=t0+(t1-t0)*i/4,x=X(t);
+  const s=long?new Date(t).toLocaleDateString([],{day:"numeric",month:"short"}):new Date(t).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  g.fillText(s,Math.min(Math.max(x-16,L),W-R-40),H-6)}
+ g.strokeStyle=col("--accent");g.lineWidth=2;g.beginPath();
+ data.forEach((p,i)=>{const x=X(p.t),y=Y(p.v);
+  // break the line across gaps longer than 5 minutes (node offline)
+  if(i&&p.t-data[i-1].t>300000)g.moveTo(x,y);else i?g.lineTo(x,y):g.moveTo(x,y);pts.push({x,y,p})});
+ g.stroke();
+ if(data.length<80){g.fillStyle=col("--accent");pts.forEach(q=>{g.beginPath();g.arc(q.x,q.y,2.5,0,7);g.fill()})}
+}
+$("ch").addEventListener("mousemove",e=>{if(!pts.length)return;const x=e.clientX-e.target.getBoundingClientRect().left;
+ let b=pts[0];for(const q of pts)if(Math.abs(q.x-x)<Math.abs(b.x-x))b=q;
+ const m=METRICS.find(z=>z.k===metric),tip=$("tip");
+ tip.textContent="#"+b.p.n+"  "+b.p.v.toFixed(m.d)+" "+m.unit+"  "+new Date(b.p.t).toLocaleString();
+ tip.style.display="block";tip.style.left=Math.min(e.clientX+12,innerWidth-230)+"px";tip.style.top=(e.clientY-30)+"px"});
+$("ch").addEventListener("mouseleave",()=>$("tip").style.display="none");
+
+/* ---- controls ------------------------------------------------------------ */
+$("range").onchange=draw;addEventListener("resize",draw);
+$("csv").onclick=()=>{
+ const cols=["n","SM","DS","T","H","P","B","W1","W2","rssi","snr"];
+ const lines=["time,"+cols.join(",")].concat(hist.map(h=>new Date(h.t).toISOString()+","+cols.map(c=>h.d[c]??"").join(",")));
+ const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));
+ a.download="sasya_"+new Date().toISOString().slice(0,10)+".csv";a.click()};
+$("clear").onclick=()=>{if(confirm("Delete all stored history in this browser?")){hist=[];last=null;store.set(HKEY,hist);render();draw();table()}};
+["Url","Topic","User","Pass"].forEach(k=>$("c"+k).value=cfg[k.toLowerCase()]);
+$("save").onclick=()=>{cfg={url:$("cUrl").value.trim(),topic:$("cTopic").value.trim().replace(/\/+$/,""),user:$("cUser").value,pass:$("cPass").value};
+ store.set(CKEY,cfg);last=hist.length?hist[hist.length-1]:null;connect()};
+
+tabs();render();draw();table();connect();
+setInterval(render,10000);setInterval(draw,60000);
+</script></body></html>
