@@ -22,7 +22,7 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Sasya Monitor: shows the bundled field-node dashboard (assets/index.html) in a WebView.
+ * Irrinova Soil Monitor: shows the bundled field-node dashboard (assets/index.html) in a WebView.
  * The page connects to the MQTT broker over secure WebSocket by itself. Assets are served
  * from a fixed https origin so the saved history and settings (localStorage) persist.
  */

@@ -50,17 +50,17 @@ jobs:
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
         run: |
           gradle -p android assembleRelease --no-daemon
-          cp android/app/build/outputs/apk/release/app-release.apk SasyaMonitor.apk
+          cp android/app/build/outputs/apk/release/app-release.apk IrrinovaSoilMonitor.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SasyaMonitor-apk
-          path: SasyaMonitor.apk
+          name: IrrinovaSoilMonitor-apk
+          path: IrrinovaSoilMonitor.apk
 
       - name: Publish to the "app" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view app >/dev/null 2>&1 || gh release create app --title "Sasya Monitor Android app" \
-            --notes "Latest build of the Sasya Monitor app. Download SasyaMonitor.apk on your phone and install it."
-          gh release upload app SasyaMonitor.apk --clobber
+          gh release view app >/dev/null 2>&1 || gh release create app --title "Irrinova Soil Monitor Android app" \
+            --notes "Latest build of the Irrinova Soil Monitor app. Download IrrinovaSoilMonitor.apk on your phone and install it."
+          gh release upload app IrrinovaSoilMonitor.apk --clobber
