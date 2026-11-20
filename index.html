@@ -231,8 +231,10 @@ $("range").onchange=draw;addEventListener("resize",draw);
 $("csv").onclick=()=>{
  const cols=["n","SM","DS","T","H","P","B","W1","W2","rssi","snr"];
  const lines=["time,"+cols.join(",")].concat(hist.map(h=>new Date(h.t).toISOString()+","+cols.map(c=>h.d[c]??"").join(",")));
+ const name="sasya_"+new Date().toISOString().slice(0,10)+".csv";
+ if(window.SasyaApp){SasyaApp.saveCsv(name,lines.join("\n"));return}   // Android app: share via the app
  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));
- a.download="sasya_"+new Date().toISOString().slice(0,10)+".csv";a.click()};
+ a.download=name;a.click()};
 $("clear").onclick=()=>{if(confirm("Delete all stored history in this browser?")){hist=[];last=null;store.set(HKEY,hist);render();draw();table()}};
 ["Url","Topic","User","Pass"].forEach(k=>$("c"+k).value=cfg[k.toLowerCase()]);
 $("save").onclick=()=>{cfg={url:$("cUrl").value.trim(),topic:$("cTopic").value.trim().replace(/\/+$/,""),user:$("cUser").value,pass:$("cPass").value};
