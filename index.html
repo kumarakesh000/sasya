@@ -86,7 +86,7 @@ details summary{cursor:pointer;color:var(--mute);font-size:13px}
 <div class="panel">
  <div class="row"><span class="k">Recent packets</span>
   <div class="right"><span class="sub" id="count"></span><button id="csv">Export CSV</button><button id="clear">Clear history</button></div></div>
- <div class="tbl"><table><thead><tr><th>Time</th><th>#</th><th>Soil cb</th><th>Soil &deg;C</th><th>Air &deg;C</th><th>RH %</th><th>hPa</th><th>Batt V</th><th>W1</th><th>W2</th><th>RSSI</th></tr></thead>
+ <div class="tbl"><table><thead><tr><th>Time</th><th>#</th><th>Soil cb</th><th>Soil &deg;C</th><th>Air &deg;C</th><th>RH %</th><th>hPa</th><th>Battery</th><th>W1</th><th>W2</th><th>RSSI</th></tr></thead>
  <tbody id="rows"></tbody></table></div>
 </div>
 
@@ -114,13 +114,20 @@ const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v)
 let cfg=Object.assign({},DEFAULTS,store.get(CKEY,{}));
 let hist=store.get(HKEY,[]);           // [{t:ms, d:{...}}]
 let last=hist.length?hist[hist.length-1]:null, metric=store.get("sasya_metric","SM");
+if(metric==="B")metric="Bp";   // battery chart is now shown in %
 let client=null, rxStatus="?";
 
 const METRICS=[{k:"SM",label:"Soil tension",unit:"cb",d:0},{k:"DS",label:"Soil temp",unit:"°C",d:2},
  {k:"T",label:"Air temp",unit:"°C",d:2},{k:"H",label:"Humidity",unit:"%",d:1},{k:"P",label:"Pressure",unit:"hPa",d:1},
- {k:"B",label:"Battery",unit:"V",d:2},{k:"rssi",label:"RSSI",unit:"dBm",d:0}];
+ {k:"Bp",label:"Battery",unit:"%",d:0},{k:"rssi",label:"RSSI",unit:"dBm",d:0}];
 
 const isNum=v=>typeof v==="number"&&isFinite(v);
+/* Battery %: single-cell Li-ion (3.0–4.2 V) resting-voltage curve, linear between points. */
+const BCURVE=[[3.30,0],[3.50,3],[3.60,8],[3.65,15],[3.70,25],[3.75,35],[3.80,46],[3.90,62],[4.00,78],[4.10,90],[4.20,100]];
+function battPct(v){if(!isNum(v))return null;if(v<=BCURVE[0][0])return 0;
+ for(let i=1;i<BCURVE.length;i++){const[a,pa]=BCURVE[i-1],[b,pb]=BCURVE[i];if(v<=b)return Math.round(pa+(v-a)/(b-a)*(pb-pa))}return 100}
+/* Value of a metric in a record; Bp (battery %) is derived from B (volts). */
+const mv=(d,k)=>k==="Bp"?battPct(d.B):d[k];
 function ago(ms){const s=Math.max(0,Math.round(ms/1000));if(s<60)return s+" s ago";if(s<3600)return Math.floor(s/60)+" min ago";
  if(s<86400)return Math.floor(s/3600)+" h "+Math.floor(s%3600/60)+" min ago";return Math.floor(s/86400)+" d ago"}
 function fmt(v,d){return isNum(v)?v.toFixed(d):(v==null?"–":String(v))}
@@ -132,7 +139,8 @@ function smInfo(v){if(!isNum(v)){if(v==="OPEN")return["t-bd","Sensor dry or disc
   if(typeof v==="string"&&v.startsWith("HI"))return["t-bd","Too dry to measure"];return["t-bd","Sensor error"]}
  if(v<=10)return["t-in","Wet / saturated"];if(v<=30)return["t-ok","Moist – good"];
  if(v<=60)return["t-wn","Drying – irrigate soon"];return["t-bd","Dry – irrigate"]}
-function batInfo(v){if(!isNum(v))return["",""];if(v>=3.4)return["t-ok","Good"];if(v>=3.2)return["t-wn","Getting low"];return["t-bd","Replace battery"]}
+function batInfo(v){if(!isNum(v))return["",""];const p=battPct(v),s=v.toFixed(2)+" V · ";
+ if(p>=30)return["t-ok",s+"Good"];if(p>=10)return["t-wn",s+"Getting low"];return["t-bd",s+"Charge / replace"]}
 function water(id,v){$(id).innerHTML=v===1?'<span class="tag t-in" style="font-size:16px">Water</span>':
  v===0?'<span class="tag t-ok" style="font-size:16px">Dry</span>':"&ndash;"}
 
@@ -175,7 +183,7 @@ function render(){
  $("pNode").textContent=live?"live":last.retained?"waiting for next":"silent "+ago(age).replace(" ago","");
  val("vSM",d.SM,"cb",0);const s=smInfo(d.SM);tag("tSM",s[0],s[1]);
  val("vDS",d.DS,"°C",2);val("vT",d.T,"°C",2);val("vH",d.H,"%",1);val("vP",d.P,"hPa",1);
- val("vB",d.B,"V",2);const b=batInfo(d.B);tag("tB",b[0],b[1]);
+ val("vB",isNum(d.B)?battPct(d.B):d.B,"%",0);const b=batInfo(d.B);tag("tB",b[0],b[1]);
  water("vW1",d.W1);water("vW2",d.W2);
  $("vRssi").innerHTML=isNum(d.rssi)?Math.round(d.rssi)+"<small>dBm</small>":"&ndash;";
  $("nSig").textContent=isNum(d.snr)?"SNR "+d.snr+" dB":"";
@@ -187,7 +195,7 @@ function table(){
  $("count").textContent=hist.length+" packets stored";
  $("rows").innerHTML=rows.map(r=>{const d=r.d;return "<tr><td>"+new Date(r.t).toLocaleString()+"</td><td>"+fmt(d.n,0)+
   "</td><td>"+fmt(d.SM,0)+"</td><td>"+fmt(d.DS,2)+"</td><td>"+fmt(d.T,2)+"</td><td>"+fmt(d.H,1)+"</td><td>"+fmt(d.P,1)+
-  "</td><td>"+fmt(d.B,2)+"</td><td>"+fmt(d.W1,0)+"</td><td>"+fmt(d.W2,0)+"</td><td>"+fmt(d.rssi,0)+"</td></tr>"}).join("");
+  "</td><td>"+(isNum(d.B)?battPct(d.B)+"% <small>("+d.B.toFixed(2)+")</small>":fmt(d.B,2))+"</td><td>"+fmt(d.W1,0)+"</td><td>"+fmt(d.W2,0)+"</td><td>"+fmt(d.rssi,0)+"</td></tr>"}).join("");
 }
 
 function tabs(){$("tabs").innerHTML=METRICS.map(m=>'<button data-k="'+m.k+'" class="'+(m.k===metric?"on":"")+'">'+m.label+"</button>").join("");
@@ -200,7 +208,7 @@ function draw(){
  const W=r.width,H=r.height,cs=getComputedStyle(document.documentElement),col=n=>cs.getPropertyValue(n).trim();
  g.clearRect(0,0,W,H);g.font="12px system-ui,sans-serif";pts=[];
  const m=METRICS.find(x=>x.k===metric),span=+$("range").value,now=Date.now();
- const data=hist.filter(h=>isNum(h.d[metric])&&(!span||now-h.t<=span)).map(h=>({t:h.t,v:h.d[metric],n:h.d.n}));
+ const data=hist.filter(h=>isNum(mv(h.d,metric))&&(!span||now-h.t<=span)).map(h=>({t:h.t,v:mv(h.d,metric),n:h.d.n}));
  if(!data.length){g.fillStyle=col("--mute");g.fillText("No "+m.label.toLowerCase()+" readings in this range yet",10,20);return}
  let lo=Math.min(...data.map(p=>p.v)),hi=Math.max(...data.map(p=>p.v));
  if(hi-lo<1e-9){lo-=1;hi+=1}const pad=(hi-lo)*.1;lo-=pad;hi+=pad;
@@ -229,8 +237,8 @@ $("ch").addEventListener("mouseleave",()=>$("tip").style.display="none");
 /* ---- controls ------------------------------------------------------------ */
 $("range").onchange=draw;addEventListener("resize",draw);
 $("csv").onclick=()=>{
- const cols=["n","SM","DS","T","H","P","B","W1","W2","rssi","snr"];
- const lines=["time,"+cols.join(",")].concat(hist.map(h=>new Date(h.t).toISOString()+","+cols.map(c=>h.d[c]??"").join(",")));
+ const cols=["n","SM","DS","T","H","P","B","Bp","W1","W2","rssi","snr"];
+ const lines=["time,"+cols.join(",").replace(",B,Bp,",",B_volts,B_percent,")].concat(hist.map(h=>new Date(h.t).toISOString()+","+cols.map(c=>mv(h.d,c)??"").join(",")));
  const name="sasya_"+new Date().toISOString().slice(0,10)+".csv";
  if(window.SasyaApp){SasyaApp.saveCsv(name,lines.join("\n"));return}   // Android app: share via the app
  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));
